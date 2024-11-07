@@ -31,11 +31,14 @@ import nltk
 nltk.download('stopwords')
 from resume_parser import ResumeParser
 
-
-
+from transformers import pipeline
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import warnings
 ###### Preprocessing functions ######
 
-
+model = AutoModelForSequenceClassification.from_pretrained("KevSun/Personality_LM", ignore_mismatched_sizes=True)
+tokenizer = AutoTokenizer.from_pretrained("KevSun/Personality_LM")
 # Generates a link allowing the data in a given panda dataframe to be downloaded in csv format 
 def get_csv_download_link(df,filename,text):
     csv = df.to_csv(index=False)
@@ -116,6 +119,28 @@ def insertf_data(feed_name,feed_email,feed_score,comments,Timestamp):
     rec_values = (feed_name, feed_email, feed_score, comments, Timestamp)
     cursor.execute(insertfeed_sql, rec_values)
     connection.commit()
+
+def predict_personality(text):
+    # Encode the input text using the tokenizer
+    encoded_input = tokenizer(text, return_tensors='pt', padding=True, truncation=True, max_length=64)
+
+    model.eval()  # Set model to evaluation mode
+
+    # Perform the prediction
+    with torch.no_grad():
+        outputs = model(**encoded_input)
+
+    predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
+    predicted_scores = predictions[0].tolist()
+
+    # Define trait names
+    trait_names = ["agreeableness", "openness", "conscientiousness", "extraversion", "neuroticism"]
+
+    # Collect the personality traits and scores
+    personality = {trait: score for trait, score in zip(trait_names, predicted_scores)}
+    return personality
+
+
 
 
 ###### Setting Page Configuration (favicon, Logo, Title) ######
@@ -254,10 +279,19 @@ def run():
 
             ### parsing and extracting whole resume 
             resume_data = ResumeParser(save_image_path).get_extracted_data()
+            
             if resume_data:
                 
                 ## Get the whole resume data into resume_text
                 resume_text = pdf_reader(save_image_path)
+                
+                warnings.filterwarnings('ignore')
+
+                # Load the personality prediction model
+                model = AutoModelForSequenceClassification.from_pretrained("KevSun/Personality_LM", ignore_mismatched_sizes=True)
+                tokenizer = AutoTokenizer.from_pretrained("KevSun/Personality_LM")
+                
+
 
                 ## Showing Analyzed data from (resume_data)
                 st.header("**Resume Analysis 🤘**")
@@ -556,10 +590,31 @@ def run():
                 cur_time = datetime.datetime.fromtimestamp(ts).strftime('%H:%M:%S')
                 timestamp = str(cur_date+'_'+cur_time)
 
+                st.header("**Personality Prediction 🔮**")
+                st.success("Personality Prediction based on your resume:")
 
+                try:
+                    # Call the prediction function
+                    personality = predict_personality(resume_text)
+                    
+                    # Assuming personality prediction returns a dictionary of traits
+                    for trait, score in personality[0].items():
+                        st.text(f"{trait}: {score}")
+                    
+                except Exception as e:
+                    pass
                 ## Calling insert_data to add all the data into user_data                
                 insert_data(str(sec_token), str(ip_add), (host_name), (dev_user), (os_name_ver), (latlong), (city), (state), (country), (act_name), (act_mail), (act_mob), resume_data['name'], resume_data['email'], str(resume_score), timestamp, str(resume_data['no_of_pages']), reco_field, cand_level, str(resume_data['skills']), str(recommended_skills), str(rec_course), pdf_name)
 
+                st.header("**Personality Prediction based on Resume**")
+                
+
+                # Predict personality
+                personality_scores = predict_personality(resume_text)
+
+                # Display the results
+                for trait, score in personality_scores.items():
+                    st.text(f"{trait.capitalize()}: {score:.4f}")
                 ## Recommending Resume Writing Video
                 st.header("**Bonus Video for Resume Writing Tips💡**")
                 resume_vid = random.choice(resume_videos)
